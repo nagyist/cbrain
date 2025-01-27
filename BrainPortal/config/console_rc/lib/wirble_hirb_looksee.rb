@@ -69,6 +69,9 @@ extend Hirb::Console
                           copies_count      copies_numfiles
                           task_setups_count task_setups_numfiles
                         ),
+  'BackgroundActivity' => %i( id type user_id remote_resource_id
+                              status current_item num_successes num_failures
+                        ),
 
 }.each do |klassname,fields|
   fields = fields.dup
@@ -105,6 +108,13 @@ end
 # Table view of things with pretty borders and no headers
 def htable(thingie, options={})
   table thingie, options.merge(:unicode => true, :headers => false)
+end
+
+def sql(command)
+  res = ApplicationRecord.connection.execute command
+  f   = res.fields
+  tab = res.to_a.unshift f
+  htable tab
 end
 
 (CbrainConsoleFeatures ||= []) << <<FEATURES

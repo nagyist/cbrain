@@ -159,6 +159,15 @@ class ClusterTask < CbrainTask
     24.hours
   end
 
+  # This method can be redefined in a subclass;
+  # it will be called to provide the framework
+  # with an amount of memory needed by the cluster job.
+  # The value should be a number, in units of megabytes.
+  # The value returned by default here is nil.
+  def job_memory_estimate
+    nil
+  end
+
 
 
   ##################################################################
@@ -1370,6 +1379,7 @@ class ClusterTask < CbrainTask
       # Serialize a copy of the ActiveRecord for this task, for reference.
       File.open(".cbrain_task.json","w") do |fh|
         fh.write JSON.pretty_generate(JSON[self.to_json])
+        fh.write "\n"
       end
 
       # Remove core files. Core file names can be customized by a sysadmin, so
@@ -1911,6 +1921,7 @@ exit $status
     job.wd       = workdir
     job.name     = self.tname_tid  # "#{self.name}-#{self.id}" # some clusters want all names to be different!
     job.walltime = self.job_walltime_estimate
+    job.memory   = self.job_memory_estimate
     job.task_id  = self.id
 
     # Note: all extra_qsub_args defined in the tool_configs (bourreau, tool and bourreau/tool)
@@ -2059,7 +2070,7 @@ exit $status
 
   # Save the directory created to run the job.
   # The directory will be saved as a FileCollection
-  # only if the task have a results Data Provider.
+  # only if the task has a results Data Provider.
   def save_cluster_workdir(user_id)
     full_cluster_workdir = self.full_cluster_workdir
     user                 = User.find(user_id)
@@ -2676,7 +2687,7 @@ bash -c "exit $_cbrain_status_"
     # Sets tool config among tool configs accessible by user of current task
     new_tool                = new_task.tool
     accessible_tool_configs = ToolConfig.find_all_accessible_by_user(self.user).where(:tool_id => new_tool.id, :bourreau_id => self.bourreau_id)
-    new_tcid                = accessible_tool_configs.limit(1).raw_first_column(:id)[0] if new_tcid.blank?
+    new_tcid                = accessible_tool_configs.limit(1).ids[0] if new_tcid.blank?
     if new_tcid.blank? || ! accessible_tool_configs.where(:id => new_tcid).exists?
       cb_error "Cannot find an acceptable tool config ID for this user, tool, and bourreau."
     end

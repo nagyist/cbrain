@@ -32,7 +32,8 @@
 #          "runtime":    "blah/blah/runtime.kv",
 #          "descriptor": "blah/blah/descriptor.json",
 #          "invoke":     "blah/blah/params.json",
-#          "jobscript":  "blah/blah/cbrain_script.sh"
+#          "jobscript":  "blah/blah/cbrain_script.sh",
+#          "cbrain_params": "blah/blah/cbparams.json"
 #       }
 #     }
 #   }
@@ -89,7 +90,7 @@ module BoutiquesTaskLogsCopier
 
     # Get the cleaning paths patterns from the descriptor
     descriptor = self.descriptor_for_save_results
-    destpaths  = descriptor.custom_module_info('BoutiquesTaskLogsCopier')
+    destpaths  = descriptor.custom_module_info('BoutiquesTaskLogsCopier') || {}
 
     # Copy STDOUT and STDERR, if possible
     install_std_log_file(science_stdout_basename, destpaths[:stdout],     "stdout")
@@ -104,6 +105,12 @@ module BoutiquesTaskLogsCopier
 
     # Copy sbatch/qsub script
     install_std_log_file(science_script_basename, destpaths[:jobscript],  "jobscript")
+
+    # Create then copy the cbrain params file, if needed
+    if destpaths[:cbrain_params].present?
+      File.open(".cbrain_params.json","w") { |fh| fh.write JSON.pretty_generate(self.params);fh.write "\n" }
+      install_std_log_file(".cbrain_params.json", destpaths[:cbrain_params], "cbrain parameters")
+    end
 
     # Performs standard processing
     super
@@ -181,7 +188,4 @@ module BoutiquesTaskLogsCopier
   end
 
 end
-
-
-
 

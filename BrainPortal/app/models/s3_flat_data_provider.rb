@@ -60,6 +60,8 @@ class S3FlatDataProvider < DataProvider
 
   before_save :canonify_path_start
 
+  api_attr_visible :cloud_storage_client_bucket_name, :cloud_storage_client_path_start, :cloud_storage_endpoint, :cloud_storage_region
+
   # This returns the category of the data provider
   def self.pretty_category_name #:nodoc:
     "Cloud"
@@ -137,7 +139,9 @@ class S3FlatDataProvider < DataProvider
   def impl_provider_collection_index(userfile, directory = :all, allowed_types = :regular) #:nodoc:
 
     prefix = Pathname.new(provider_full_path(userfile))
-    if directory == :all
+    if userfile.is_a?(SingleFile)
+      s3method = :list_single_object
+    elsif directory == :all
       s3method = :list_objects_recursive
     else
       s3method = :list_objects_one_level
@@ -185,6 +189,11 @@ class S3FlatDataProvider < DataProvider
       FileUtils.remove_entry(fullpath.to_s, true) rescue true
     end
 
+    # This adds the ability to synchronize only a subset of the files, by patterns.
+    # Danger, lots of caveats here! Not a standard procedure within CBRAIN apps.
+    to_add = filter_fileinfos_by_patterns(to_add, userfile.name, userfile.sync_select_patterns) if
+      userfile.is_a?(FileCollection)
+
     # Add files locally. Regular and symlinks are supported.
     to_add.each do |fi|
       relpath      = Pathname.new(fi.name) # "abc" or "abc/def" or "abc/dev/gih.txt", always files or symlinks
@@ -216,18 +225,19 @@ class S3FlatDataProvider < DataProvider
   end
 
   # Use our own internal rsync-like algorithm.
-  def impl_sync_to_provider(userfile) #:nodoc:
+  def impl_sync_to_provider(userfile, alternate_source_path=nil) #:nodoc:
 
     # Intermediate browse_path on S3 side
     provider_browse_path = Pathname.new(userfile.browse_path.presence || "")
 
     # Cache area info
-    localfull   = cache_full_path(userfile)
+    localfull   = alternate_source_path.to_s.present? ?
+       Pathname.new(alternate_source_path) : cache_full_path(userfile)
     localparent = localfull.parent
 
     # Figure out what to do
     to_add, to_remove = rsync_emulation(
-      cache_recursive_fileinfos(    userfile ),
+      cache_recursive_fileinfos(    userfile, localfull ),
       provider_recursive_fileinfos( userfile ),
     )
 
@@ -235,6 +245,11 @@ class S3FlatDataProvider < DataProvider
     rem_keys = s3_fileinfos_to_realkeys(to_remove)
     rem_keys = rem_keys.map { |k| add_start((provider_browse_path + k).to_s) }
     s3_connection.delete_multiple_objects(rem_keys)
+
+    # This adds the ability to synchronize only a subset of the files, by patterns.
+    # Danger, lots of caveats here! Not a standard procedure within CBRAIN apps.
+    to_add = filter_fileinfos_by_patterns(to_add, userfile.name, userfile.sync_select_patterns) if
+      userfile.is_a?(FileCollection)
 
     # Add files remotely. Regular and symlinks are supported.
     to_add.each do |fi|
@@ -302,12 +317,13 @@ class S3FlatDataProvider < DataProvider
 
   # Scan the local cache and returns a list of FileInfo objects
   # descriving all the files and directories.
-  def cache_recursive_fileinfos(userfile) #:nodoc:
-    cache_fullpath = userfile.cache_full_path
+  def cache_recursive_fileinfos(userfile, alternate_source_path=nil) #:nodoc:
+    cache_fullpath = alternate_source_path.to_s.present? ?
+      Pathname.new(alternate_source_path) : userfile.cache_full_path
     cache_parent   = cache_fullpath.parent
     parent_length  = "#{cache_parent}/".length # used in substr below
     glob_pattern   = userfile.is_a?(FileCollection) ? "/**/*" : ""
-    Dir.glob("#{userfile.cache_full_path}#{glob_pattern}", File::FNM_DOTMATCH).map do |fullpath|   # /path/to/userfilebase/d1/d2/f1.txt
+    Dir.glob("#{cache_fullpath}#{glob_pattern}", File::FNM_DOTMATCH).map do |fullpath|   # /path/to/userfilebase/d1/d2/f1.txt
       next if fullpath.ends_with? "/."         # skip spurious entries for self-referencing sub directories
       next if fullpath.ends_with? "/.."        # skip spurious entries for referencing parent directories (never happens?)
       stats   = File.lstat(fullpath)           # not stat() !
@@ -339,8 +355,6 @@ class S3FlatDataProvider < DataProvider
     objlist     = s3_connection.list_objects_recursive(provider_full_path(userfile))
     s3_objlist_to_fileinfos(single_head + objlist, userfile.browse_path)
   end
-
-  private
 
   # Before save callback. The client start path needs to be
   # nil, or a relative path such as 'a/b/c' with no leading slash.
@@ -440,6 +454,38 @@ class S3FlatDataProvider < DataProvider
     return [ add_dest.sort    { |a,b| a.name <=> b.name },
              delete_dest.sort { |a,b| a.name <=> b.name },
            ]
+  end
+
+  # Given a list of FileInfo objects with names like "colname/dir1/dir2/file"
+  # returns just the subset that match any of the file +patterns+,
+  # which are like "dir1/*/f*".
+  def filter_fileinfos_by_patterns(fileinfos, colname, patterns)
+    return fileinfos if patterns.blank?
+    patterns = Array(patterns).map(&:to_s)  # e.g. "dir1/dir2/*"
+    fileinfos.select do |fi|
+      finame  = Pathname.new(fi.name)       # "Collection/dir1/dir2/file"
+      fifirst = finame.each_filename.first  # "Collection"
+      next true  if finame.to_s == colname  # "Collection" == "Collection"
+      next false if fifirst     != colname  # should never happen
+      rest = finame.relative_path_from(colname).to_s  # "dir1/dir2/file"
+      selected = patterns.any? { |pat| File.fnmatch(pat, rest, (File::FNM_PATHNAME | File::FNM_DOTMATCH) ) }
+      #if selected
+      #  puts_green "Selected: #{rest}"
+      #else
+      #  puts_red "Unselected: #{rest}"
+      #end
+      selected
+    end
+  end
+
+  #################################################################
+  # Model Callbacks
+  #################################################################
+
+  # Normally, DPs can only be owned by admins. However, this DP class
+  # can be owned by normal users.
+  def owner_is_appropriate #:nodoc:
+    return true
   end
 
 end
