@@ -37,8 +37,8 @@ class PortalSystemChecks < CbrainChecker #:nodoc:
   def self.a000_ensure_models_are_preloaded #:nodoc:
     # There's a piece of code at the end of each of these models
     # which forces the pre-load of all their subclasses.
-    Userfile
-    PortalTask # not ClusterTask, which is only on the Bourreau rails app
+    Userfile.nil?
+    PortalTask.nil? # not ClusterTask, which is only on the Bourreau rails app
     Userfile.preload_subclasses
     PortalTask.preload_subclasses
   end
@@ -89,6 +89,26 @@ class PortalSystemChecks < CbrainChecker #:nodoc:
       puts "C> \t         command: 'rake db:sanity:check RAILS_ENV=#{Rails.env}'."
       Kernel.exit(10)
     end
+  end
+
+
+
+  def self.a030_ensure_we_can_load_oidc_config
+
+      #----------------------------------------------------------------------------
+      puts "C> Loading OIDC configuration, if any..."
+      #----------------------------------------------------------------------------
+
+      begin
+        OidcConfig.load_from_file
+        names = OidcConfig.all_names.join(", ")
+        names = "(None enabled, or config file missing)" if names.blank?
+        puts "C> \t- Found OIDC configurations: #{names}"
+      rescue => ex
+        puts "C> \t- ERROR: Cannot load OIDC configuration file. Check 'oidc.yml.erb'."
+        puts "C> \t  #{ex.message}"
+        Kernel.exit(10)
+      end
   end
 
 
@@ -178,13 +198,6 @@ class PortalSystemChecks < CbrainChecker #:nodoc:
       return
     end
 
-    begin
-      Kernel.open("#{Rails.root}/tmp/AgentLocker.lock", File::WRONLY|File::CREAT|File::EXCL).close
-    rescue Errno::EEXIST
-      puts "C> \t- Locker already being created. (#{Rails.root}/tmp/AgentLocker.lock)"
-      return
-    end
-
     puts "C> \t- No locker processes found. Creating one."
 
     al_logger = Log4r::Logger.new('AgentLocker')
@@ -201,6 +214,73 @@ class PortalSystemChecks < CbrainChecker #:nodoc:
         :name           => 'CBRAIN AgentLocker',
       }
     )
+  end
+
+
+
+  def self.z010_ensure_custom_bash_scripts_succeed #:nodoc:
+
+    checker_dir = Rails.root + "boot_checks"
+    return if ! File.directory? checker_dir.to_s
+
+    #----------------------------------------------------------------------------
+    puts "C> Running custom checker bash scripts..."
+    #----------------------------------------------------------------------------
+
+    scripts  = Dir.glob("#{checker_dir}/*.sh")
+    if scripts.empty?
+      puts "C> \t- Skipping, no scripts configured."
+      return
+    end
+
+    scripts.sort.each do |fullpath|
+      basename = Pathname.new(fullpath).basename
+      puts "C> \t- Executing '#{basename}'..."
+      system("bash",fullpath)
+      status  = $? # a Process::Status object
+      next if status.exitstatus == 0
+      puts "C> \t- STOPPING BOOT SEQUENCE: script returned with status #{status.exitstatus}"
+      raise "Script '#{basename}' exited with #{status.exitstatus}"
+    end
+  end
+
+
+
+  # Note: this check is SKIPPED when starting the console.
+  # See BrainPortal/config/initializers/validation_portal.rb
+  def self.z020_start_background_activity_workers #:nodoc:
+
+    #----------------------------------------------------------------------------
+    puts "C> Starting Background Activity Worker..."
+    #----------------------------------------------------------------------------
+
+    if ENV['CBRAIN_NO_BACKGROUND_ACTIVITY_WORKER'].present? || Rails.env == 'test'
+      puts "C> \t- NOT started as we are in test mode, or env variable CBRAIN_NO_BACKGROUND_ACTIVITY_WORKER is set."
+      return
+    end
+
+    worker_name = 'PortalActivity'
+    num_workers = ::Rails.env == 'production' ? 3 : 1
+
+    baclogger = Log4r::Logger[worker_name]
+    unless baclogger
+      baclogger = Log4r::Logger.new(worker_name)
+      baclogger.add(Log4r::RollingFileOutputter.new('background_activity_outputter',
+                    :filename  => "#{Rails.root}/log/#{worker_name}.combined..log",
+                    :formatter => Log4r::PatternFormatter.new(:pattern => "%d %l %m"),
+                    :maxsize   => 1000000, :trunc => 600000))
+      baclogger.level = Log4r::INFO
+    end
+
+    worker_pool = WorkerPool.create_or_find_pool(BackgroundActivityWorker,
+       num_workers, # number of instances
+       { :name           => worker_name,
+         :check_interval => 5,
+         :worker_log     => baclogger,
+       }
+    )
+    puts "C> \t- Started: PID=#{worker_pool.workers.map(&:pid).join(", ")}"
+
   end
 
 end

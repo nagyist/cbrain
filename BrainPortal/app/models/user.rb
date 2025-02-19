@@ -100,6 +100,7 @@ class User < ApplicationRecord
   has_many                :tags,            :dependent => :destroy
   has_many                :custom_filters,  :dependent => :destroy
   has_many                :exception_logs,  :dependent => :destroy
+  has_many                :background_activities, :dependent => :destroy
   # Resource usage is kept forever even if account is destroyed.
   has_many                :resource_usage
 
@@ -527,8 +528,8 @@ class User < ApplicationRecord
 
   # Create a random string (currently for passwords).
   def self.random_string
-    length = rand(5) + 4
-    s = ""
+    length = rand(4) + 8
+    s = "T"
     length.times do
       c = rand(75) + 48 # ascii range from '0' to 'z'
       redo if c == 92 || c == 96  # \ or '
