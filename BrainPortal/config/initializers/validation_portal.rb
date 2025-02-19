@@ -57,9 +57,9 @@ if program_name =~ /console/
     puts "C> \t- Note:  You can skip all CBRAIN validations by temporarily setting the\n"
     puts "C> \t         environment variable 'CBRAIN_SKIP_VALIDATIONS' to '1'.\n"
     CbrainSystemChecks.check(:all)
-    PortalSystemChecks.check(:all)
+    PortalSystemChecks.check(:all, :except => [ :z020_start_background_activity_workers ])
   end
-  Process.setproctitle "CBRAIN Console #{RemoteResource.current_resource.class} #{RemoteResource.current_resource.name} #{CBRAIN::Instance_Name}"
+  Process.setproctitle "CBRAIN Console #{RemoteResource.current_resource.class} #{RemoteResource.current_resource.name}"
 
 # ----- SERVER -----
 elsif program_name =~ /server|puma/ # normal server mode
@@ -69,7 +69,7 @@ elsif program_name =~ /server|puma/ # normal server mode
   # Note, because the puma server insists on renaming its process,
   # the assignment below is also performed whenever a show
   # action is sent to the controls controller.
-  Process.setproctitle "CBRAIN Server #{RemoteResource.current_resource.class} #{RemoteResource.current_resource.name} #{CBRAIN::Instance_Name}"
+  Process.setproctitle "CBRAIN Server #{RemoteResource.current_resource.class} #{RemoteResource.current_resource.name}"
 
 # ----- RSPEC TESTS -----
 elsif program_name =~ /rspec/ # test suite
@@ -97,7 +97,7 @@ elsif program_name =~ /rake/
     puts "C> \t- All validations will run for rake task '#{first_arg}'."
     #------------------------------------------------------------------------------
     CbrainSystemChecks.check(:all)
-    PortalSystemChecks.check(:all)
+    PortalSystemChecks.check(:all, :except => [ :z020_start_background_activity_workers ])
   end
 
 # ----- RAILS GENERATE -----
