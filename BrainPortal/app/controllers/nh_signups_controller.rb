@@ -70,7 +70,7 @@ class NhSignupsController < NeurohubApplicationController
       flash[:error] = "It seems some error occurred. The email notification was probably not sent. There's nothing we can do about this."
     end
 
-    send_admin_notification(signup)
+    send_admin_notification(@signup)
 
     sleep 1
     flash[:notice] = "Success!"
